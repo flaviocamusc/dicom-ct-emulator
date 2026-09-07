@@ -12,6 +12,7 @@ Componentes principales:
 - `database.py`: repositorio SQLite de órdenes MWL.
 - `mwl_server.py`: servidor MWL SCP basado en `EVT_C_FIND`.
 - `minipacs.py`: repositorio de instancias y servidor SCP para C-STORE, C-FIND y C-MOVE.
+- `dicomweb_server.py`: API DICOMweb, conversión de previsualización CT y visor HTML incluido.
 - `requirements.txt`: dependencias de ejecución.
 - `README.md`: instalación, flujo de pruebas y limitaciones.
 - `LICENSE`: licencia MIT.
@@ -54,6 +55,7 @@ python -m pip check
 - Nuevas matrices o patrones CT manteniendo `Rows`, `Columns`, `PixelSpacing`, `BitsAllocated`, `BitsStored` y `PixelRepresentation` coherentes.
 - Indexación por series e instancias para consultas Query/Retrieve más completas.
 - Destinos C-MOVE persistidos y validación de AE Titles remotos.
+- Ampliar la compatibilidad con OHIF mediante validación completa de QIDO-RS/WADO-RS, metadata y frames.
 
 ## Nota sobre IA
 

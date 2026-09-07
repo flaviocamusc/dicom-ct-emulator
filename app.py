@@ -12,6 +12,7 @@ from pynetdicom import AE, evt
 from pynetdicom.sop_class import ModalityWorklistInformationFind
 
 from database import WorklistDatabase
+from dicomweb_server import DicomWebServer
 from minipacs import MiniPacsDatabase, MiniPacsServer
 from mwl_server import WorklistServer
 from pynetdicom.sop_class import StudyRootQueryRetrieveInformationModelFind, StudyRootQueryRetrieveInformationModelMove
@@ -172,6 +173,7 @@ class DicomApp(tk.Tk):
         self.mwl_server = WorklistServer(self.database, self.write_log)
         self.minipacs_database = MiniPacsDatabase(MINIPACS_DATABASE_PATH, MINIPACS_STORAGE_DIR)
         self.minipacs_server = MiniPacsServer(self.minipacs_database, self.write_log)
+        self.dicomweb_server = DicomWebServer(self.minipacs_database, self.write_log)
         self._build_variables()
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -203,6 +205,8 @@ class DicomApp(tk.Tk):
         self.minipacs_patient_name = tk.StringVar()
         self.minipacs_study_uid = tk.StringVar()
         self.minipacs_results: list[Dataset] = []
+        self.dicomweb_host = tk.StringVar(value="127.0.0.1")
+        self.dicomweb_port = tk.StringVar(value="8080")
         self.matrix_size = tk.StringVar(value="512")
         self.ct_pattern = tk.StringVar(value="phantom")
 
@@ -338,6 +342,18 @@ class DicomApp(tk.Tk):
         self.minipacs_status = ttk.Label(connection, text="Detenido")
         self.minipacs_status.grid(row=1, column=6, padx=10)
 
+        web = ttk.LabelFrame(parent, text="Visor web DICOMweb", padding=10)
+        web.pack(fill="x", pady=(10, 0))
+        for column, (label, variable) in enumerate((("Host", self.dicomweb_host), ("Puerto HTTP", self.dicomweb_port))):
+            ttk.Label(web, text=label).grid(row=0, column=column, sticky="w", padx=5)
+            ttk.Entry(web, textvariable=variable, width=22).grid(row=1, column=column, sticky="ew", padx=5)
+            web.columnconfigure(column, weight=1)
+        ttk.Button(web, text="Iniciar DICOMweb", command=self.start_dicomweb).grid(row=1, column=2, padx=5)
+        ttk.Button(web, text="Abrir visor", command=self.open_dicomweb).grid(row=1, column=3, padx=5)
+        ttk.Button(web, text="Detener", command=self.stop_dicomweb).grid(row=1, column=4, padx=5)
+        self.dicomweb_status = ttk.Label(web, text="Detenido")
+        self.dicomweb_status.grid(row=1, column=5, padx=10)
+
         destination = ttk.LabelFrame(parent, text="Destino C-MOVE", padding=10)
         destination.pack(fill="x", pady=(10, 0))
         for column, (label, variable) in enumerate((("Destino AE", self.move_destination_ae), ("Host", self.move_destination_host), ("Puerto", self.move_destination_port))):
@@ -393,6 +409,30 @@ class DicomApp(tk.Tk):
     def stop_minipacs(self) -> None:
         self.minipacs_server.stop()
         self.minipacs_status.configure(text="Detenido")
+
+    def start_dicomweb(self) -> None:
+        try:
+            host = self.dicomweb_host.get().strip() or "127.0.0.1"
+            web_port = port(self.dicomweb_port.get())
+            self.dicomweb_server.start(host, web_port)
+            self.dicomweb_status.configure(text=f"Activo en {host}:{web_port}")
+        except (ValueError, OSError, RuntimeError) as error:
+            messagebox.showerror("No se pudo iniciar DICOMweb", str(error))
+
+    def open_dicomweb(self) -> None:
+        try:
+            host = self.dicomweb_host.get().strip() or "127.0.0.1"
+            web_port = port(self.dicomweb_port.get())
+            if not self.dicomweb_server.running:
+                self.dicomweb_server.start(host, web_port)
+                self.dicomweb_status.configure(text=f"Activo en {host}:{web_port}")
+            self.dicomweb_server.open_viewer(host, web_port)
+        except (ValueError, OSError, RuntimeError) as error:
+            messagebox.showerror("No se pudo abrir DICOMweb", str(error))
+
+    def stop_dicomweb(self) -> None:
+        self.dicomweb_server.stop()
+        self.dicomweb_status.configure(text="Detenido")
 
     def use_minipacs_store(self) -> None:
         self.store_ae.set(self.minipacs_ae.get())
@@ -546,6 +586,7 @@ class DicomApp(tk.Tk):
     def close(self) -> None:
         self.mwl_server.stop()
         self.minipacs_server.stop()
+        self.dicomweb_server.stop()
         self.destroy()
 
     def write_log(self, text: str) -> None:

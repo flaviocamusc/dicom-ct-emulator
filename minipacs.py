@@ -85,6 +85,11 @@ class MiniPacsDatabase:
             rows = connection.execute("SELECT * FROM instances ORDER BY study_date, patient_id, id").fetchall()
         return [dict(row) for row in rows]
 
+    def get_item(self, sop_instance_uid: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM instances WHERE sop_instance_uid = ?", (sop_instance_uid,)).fetchone()
+        return dict(row) if row else None
+
     def delete(self, item_id: int) -> None:
         with self._connect() as connection:
             row = connection.execute("SELECT file_path FROM instances WHERE id = ?", (item_id,)).fetchone()

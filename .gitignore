@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+venv/
 generated/
 *.sqlite3
 minipacs_storage/
