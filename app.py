@@ -59,13 +59,18 @@ def make_mwl_query(patient_id: str, patient_name: str, date_from: str, date_to: 
     return query
 
 
-def generate_ct_file(patient: Dataset, output_dir: Path) -> Path:
+def generate_ct_file(patient: Dataset, output_dir: Path, matrix: int = 512, pattern: str = "phantom") -> Path:
+    if matrix not in (512, 1024):
+        raise ValueError("La matriz CT debe ser 512 o 1024")
+    if pattern not in ("phantom", "registration"):
+        raise ValueError("El patrón CT debe ser phantom o registration")
     output_dir.mkdir(parents=True, exist_ok=True)
     now = datetime.now()
     study_uid = getattr(patient, "StudyInstanceUID", "") or generate_uid()
     series_uid = generate_uid()
     sop_uid = generate_uid()
-    filename = output_dir / f"CT_{getattr(patient, 'PatientID', 'UNKNOWN')}_{sop_uid.rsplit('.', 1)[-1]}.dcm"
+    pattern_label = "PHANTOM" if pattern == "phantom" else "REGISTRATION"
+    filename = output_dir / f"CT_{getattr(patient, 'PatientID', 'UNKNOWN')}_{matrix}_{pattern_label}_{sop_uid.rsplit('.', 1)[-1]}.dcm"
 
     meta = FileMetaDataset()
     meta.MediaStorageSOPClassUID = CTImageStorage
@@ -91,13 +96,17 @@ def generate_ct_file(patient: Dataset, output_dir: Path) -> Path:
     ds.StudyTime = now.strftime("%H%M%S")
     ds.StudyID = getattr(patient, "StudyID", "CTEMU") or "CTEMU"
     ds.AccessionNumber = getattr(patient, "AccessionNumber", "")
-    ds.StudyDescription = "Synthetic CT test image"
+    ds.StudyDescription = f"Synthetic CT {pattern_label} {matrix}x{matrix}"
+    ds.SeriesDescription = ds.StudyDescription
+    ds.ImageType = ["ORIGINAL", "PRIMARY", "AXIAL"]
+    ds.ProtocolName = "CT Emulator Test Pattern"
+    ds.AcquisitionType = "SEQUENCED"
     ds.Manufacturer = "DICOM CT Modality Emulator"
     ds.PatientPosition = "HFS"
     ds.SliceThickness = "5"
     ds.KVP = "120"
-    ds.Rows = 512
-    ds.Columns = 512
+    ds.Rows = matrix
+    ds.Columns = matrix
     ds.SamplesPerPixel = 1
     ds.PhotometricInterpretation = "MONOCHROME2"
     ds.BitsAllocated = 16
@@ -108,14 +117,44 @@ def generate_ct_file(patient: Dataset, output_dir: Path) -> Path:
     ds.RescaleSlope = "1"
     ds.ImagePositionPatient = ["0", "0", "0"]
     ds.ImageOrientationPatient = ["1", "0", "0", "0", "1", "0"]
-    ds.PixelSpacing = ["0.7", "0.7"]
+    pixel_spacing = 358.0 / matrix
+    ds.PixelSpacing = [f"{pixel_spacing:.6f}", f"{pixel_spacing:.6f}"]
+    ds.ReconstructionDiameter = "358"
+    ds.RescaleType = "HU"
 
     pixels = bytearray()
-    center = 255.5
-    for y in range(512):
-        for x in range(512):
-            distance = ((x - center) ** 2 + (y - center) ** 2) ** 0.5
-            value = max(-1024, min(1200, int(800 - distance * 3)))
+    center = (matrix - 1) / 2
+    body_radius = matrix * 0.42
+    body_radius_sq = body_radius * body_radius
+    phantom_inserts = (
+        (-matrix * 0.16, -matrix * 0.16, matrix * 0.055, 300),
+        (matrix * 0.16, -matrix * 0.16, matrix * 0.055, 900),
+        (-matrix * 0.16, matrix * 0.16, matrix * 0.055, -700),
+        (matrix * 0.16, matrix * 0.16, matrix * 0.055, 1200),
+    )
+    registration_markers = (
+        (-matrix * 0.24, -matrix * 0.24), (matrix * 0.24, -matrix * 0.24),
+        (-matrix * 0.24, matrix * 0.24), (matrix * 0.24, matrix * 0.24),
+    )
+    cross_width = max(2, int(matrix * 0.008))
+    for y in range(matrix):
+        for x in range(matrix):
+            dx = x - center
+            dy = y - center
+            distance_sq = dx * dx + dy * dy
+            value = -1024
+            if distance_sq <= body_radius_sq:
+                value = 0 if pattern == "phantom" else -300
+                if pattern == "phantom":
+                    for insert_x, insert_y, insert_radius, insert_value in phantom_inserts:
+                        if (dx - insert_x) ** 2 + (dy - insert_y) ** 2 <= insert_radius * insert_radius:
+                            value = insert_value
+                else:
+                    if abs(dx) <= cross_width or abs(dy) <= cross_width:
+                        value = 1000
+                    for marker_x, marker_y in registration_markers:
+                        if (dx - marker_x) ** 2 + (dy - marker_y) ** 2 <= (matrix * 0.025) ** 2:
+                            value = 1400
             pixels.extend(int(value).to_bytes(2, byteorder="little", signed=True))
     ds.PixelData = bytes(pixels)
     ds.save_as(filename, write_like_original=False)
@@ -164,6 +203,8 @@ class DicomApp(tk.Tk):
         self.minipacs_patient_name = tk.StringVar()
         self.minipacs_study_uid = tk.StringVar()
         self.minipacs_results: list[Dataset] = []
+        self.matrix_size = tk.StringVar(value="512")
+        self.ct_pattern = tk.StringVar(value="phantom")
 
     def _build_ui(self) -> None:
         style = ttk.Style(self)
@@ -222,6 +263,10 @@ class DicomApp(tk.Tk):
 
         actions = ttk.Frame(root)
         actions.pack(fill="x", pady=(12, 0))
+        ttk.Label(actions, text="Matriz").pack(side="left")
+        ttk.Combobox(actions, textvariable=self.matrix_size, values=("512", "1024"), width=7, state="readonly").pack(side="left", padx=(4, 12))
+        ttk.Label(actions, text="Patrón").pack(side="left")
+        ttk.Combobox(actions, textvariable=self.ct_pattern, values=("phantom", "registration"), width=13, state="readonly").pack(side="left", padx=(4, 12))
         ttk.Button(actions, text="Generar CT", command=self.generate_ct).pack(side="left")
         ttk.Button(actions, text="Generar y enviar C-STORE", command=self.generate_and_store).pack(side="left", padx=8)
         ttk.Button(actions, text="Enviar archivo DICOM...", command=self.choose_and_store).pack(side="left")
@@ -564,7 +609,8 @@ class DicomApp(tk.Tk):
     def generate_ct(self) -> Path | None:
         try:
             patient = self.selected_patient()
-            filename = generate_ct_file(patient, OUTPUT_DIR)
+            matrix = int(self.matrix_size.get())
+            filename = generate_ct_file(patient, OUTPUT_DIR, matrix=matrix, pattern=self.ct_pattern.get())
             self.write_log(f"CT generado: {filename}")
             self.status.set("CT generado")
             return filename

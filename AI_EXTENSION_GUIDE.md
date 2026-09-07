@@ -51,6 +51,7 @@ python -m pip check
 - Pruebas automatizadas con un puerto efímero y una base SQLite temporal.
 - TLS DICOM con certificados configurables.
 - Enhanced CT y negociación explícita de Transfer Syntax.
+- Nuevas matrices o patrones CT manteniendo `Rows`, `Columns`, `PixelSpacing`, `BitsAllocated`, `BitsStored` y `PixelRepresentation` coherentes.
 - Indexación por series e instancias para consultas Query/Retrieve más completas.
 - Destinos C-MOVE persistidos y validación de AE Titles remotos.
 

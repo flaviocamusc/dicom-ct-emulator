@@ -6,6 +6,7 @@ Emulador de modalidad CT para pruebas de integración DICOM:
 
 - `C-FIND` contra Modality Worklist (SCP).
 - Generación de una instancia CT sintética a partir de un paciente seleccionado.
+- Generación de matrices CT nativas de `512x512` o `1024x1024` con fantoma o patrón de registro.
 - `C-STORE` como SCU hacia un PACS o servidor de almacenamiento.
 - Servidor MWL SCP local con SQLite y administración desde la interfaz gráfica Tkinter.
 - MiniPACS local con `C-STORE SCP`, `C-FIND SCP` y `C-MOVE SCP`, metadatos SQLite y archivos DICOM en disco.
@@ -103,7 +104,9 @@ Para entregar estudios a otro sistema, configura en C-MOVE el AE Title, host y p
 3. Configura el destino C-STORE y pulsa **Generar CT** o **Generar y enviar CT**.
 4. Revisa el log y confirma el estudio en el PACS.
 
-La imagen generada es sintética, de 512 x 512 píxeles, modalidad `CT`, `MONOCHROME2`, 16 bits con signo y sin datos clínicos reales. No debe utilizarse para diagnóstico.
+La imagen generada es sintética, de 512 x 512 o 1024 x 1024 píxeles, modalidad `CT`, `MONOCHROME2`, 16 bits con signo, valores HU y sin datos clínicos reales. El patrón **Fantoma** crea un cuerpo circular con insertos de contraste; **Registro** crea una cruz y marcadores fiduciales para pruebas de alineación/registro. Ambas variantes usan CT Image Storage y pueden enviarse por C-STORE. No deben utilizarse para diagnóstico.
+
+En la pestaña **Modalidad CT**, selecciona **Matriz** y **Patrón** antes de pulsar **Generar CT** o **Generar y enviar C-STORE**. La matriz 1024x1024 genera aproximadamente 2 MiB de datos de píxel por instancia.
 
 ## Consideraciones DICOM
 
