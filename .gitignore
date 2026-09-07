@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 generated/
 *.sqlite3
+minipacs_storage/
 *.log
 .env
 .env.*

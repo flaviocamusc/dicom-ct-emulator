@@ -12,12 +12,16 @@ from pynetdicom import AE, evt
 from pynetdicom.sop_class import ModalityWorklistInformationFind
 
 from database import WorklistDatabase
+from minipacs import MiniPacsDatabase, MiniPacsServer
 from mwl_server import WorklistServer
+from pynetdicom.sop_class import StudyRootQueryRetrieveInformationModelFind, StudyRootQueryRetrieveInformationModelMove
 
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = APP_DIR / "generated"
 DATABASE_PATH = APP_DIR / "mwl.sqlite3"
+MINIPACS_DATABASE_PATH = APP_DIR / "minipacs.sqlite3"
+MINIPACS_STORAGE_DIR = APP_DIR / "minipacs_storage"
 
 
 def valid_ae_title(value: str) -> str:
@@ -127,6 +131,8 @@ class DicomApp(tk.Tk):
         self.results: list[Dataset] = []
         self.database = WorklistDatabase(DATABASE_PATH)
         self.mwl_server = WorklistServer(self.database, self.write_log)
+        self.minipacs_database = MiniPacsDatabase(MINIPACS_DATABASE_PATH, MINIPACS_STORAGE_DIR)
+        self.minipacs_server = MiniPacsServer(self.minipacs_database, self.write_log)
         self._build_variables()
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -148,6 +154,16 @@ class DicomApp(tk.Tk):
         self.server_host = tk.StringVar(value="127.0.0.1")
         self.server_port = tk.StringVar(value="42424")
         self.mwl_form: dict[str, tk.StringVar] = {}
+        self.minipacs_ae = tk.StringVar(value="MINIPACS")
+        self.minipacs_host = tk.StringVar(value="127.0.0.1")
+        self.minipacs_port = tk.StringVar(value="42425")
+        self.move_destination_ae = tk.StringVar(value="MINIPACS")
+        self.move_destination_host = tk.StringVar(value="127.0.0.1")
+        self.move_destination_port = tk.StringVar(value="42425")
+        self.minipacs_patient_id = tk.StringVar()
+        self.minipacs_patient_name = tk.StringVar()
+        self.minipacs_study_uid = tk.StringVar()
+        self.minipacs_results: list[Dataset] = []
 
     def _build_ui(self) -> None:
         style = ttk.Style(self)
@@ -161,8 +177,10 @@ class DicomApp(tk.Tk):
         notebook.pack(fill="both", expand=True)
         root = ttk.Frame(notebook, padding=2)
         server_tab = ttk.Frame(notebook, padding=2)
+        minipacs_tab = ttk.Frame(notebook, padding=2)
         notebook.add(root, text="Modalidad CT")
         notebook.add(server_tab, text="Servidor MWL")
+        notebook.add(minipacs_tab, text="MiniPACS")
         ttk.Label(root, text="DICOM CT Modality Emulator", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         ttk.Label(root, text="C-FIND Modality Worklist y C-STORE SCU para pruebas de integración").pack(anchor="w", pady=(0, 12))
 
@@ -213,6 +231,7 @@ class DicomApp(tk.Tk):
         self.log = tk.Text(log_frame, height=7, state="disabled", font=("Consolas", 9))
         self.log.pack(fill="both", expand=True)
         self._build_mwl_server_ui(server_tab)
+        self._build_minipacs_ui(minipacs_tab)
 
     def _build_mwl_server_ui(self, parent: ttk.Frame) -> None:
         ttk.Label(parent, text="Servidor Modality Worklist", font=("Segoe UI", 16, "bold")).pack(anchor="w")
@@ -257,6 +276,182 @@ class DicomApp(tk.Tk):
         scrollbar.pack(side="right", fill="y")
         ttk.Button(parent, text="Eliminar orden seleccionada", command=self.delete_worklist_item).pack(anchor="w", pady=(8, 0))
         self.refresh_worklist()
+
+    def _build_minipacs_ui(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text="MiniPACS local", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        ttk.Label(parent, text="SCP DICOM para C-STORE, C-FIND y C-MOVE con SQLite y almacenamiento de archivos").pack(anchor="w", pady=(0, 12))
+
+        connection = ttk.LabelFrame(parent, text="Servidor MiniPACS", padding=10)
+        connection.pack(fill="x")
+        for column, (label, variable) in enumerate((("AE Title", self.minipacs_ae), ("Host", self.minipacs_host), ("Puerto", self.minipacs_port))):
+            ttk.Label(connection, text=label).grid(row=0, column=column, sticky="w", padx=5)
+            ttk.Entry(connection, textvariable=variable, width=22).grid(row=1, column=column, sticky="ew", padx=5)
+            connection.columnconfigure(column, weight=1)
+        ttk.Button(connection, text="Iniciar MiniPACS", command=self.start_minipacs).grid(row=1, column=3, padx=5)
+        ttk.Button(connection, text="Detener", command=self.stop_minipacs).grid(row=1, column=4, padx=5)
+        ttk.Button(connection, text="Usar como C-STORE", command=self.use_minipacs_store).grid(row=1, column=5, padx=5)
+        self.minipacs_status = ttk.Label(connection, text="Detenido")
+        self.minipacs_status.grid(row=1, column=6, padx=10)
+
+        destination = ttk.LabelFrame(parent, text="Destino C-MOVE", padding=10)
+        destination.pack(fill="x", pady=(10, 0))
+        for column, (label, variable) in enumerate((("Destino AE", self.move_destination_ae), ("Host", self.move_destination_host), ("Puerto", self.move_destination_port))):
+            ttk.Label(destination, text=label).grid(row=0, column=column, sticky="w", padx=5)
+            ttk.Entry(destination, textvariable=variable, width=22).grid(row=1, column=column, sticky="ew", padx=5)
+            destination.columnconfigure(column, weight=1)
+        ttk.Label(destination, text="El AE debe estar configurado como destino en el servidor").grid(row=1, column=3, columnspan=3, sticky="w", padx=10)
+
+        query = ttk.LabelFrame(parent, text="Consulta MiniPACS (C-FIND Study Root)", padding=10)
+        query.pack(fill="x", pady=(10, 0))
+        query_fields = (("Patient ID", self.minipacs_patient_id), ("Patient Name", self.minipacs_patient_name), ("Study UID", self.minipacs_study_uid))
+        for column, (label, variable) in enumerate(query_fields):
+            ttk.Label(query, text=label).grid(row=0, column=column, sticky="w", padx=5)
+            ttk.Entry(query, textvariable=variable).grid(row=1, column=column, sticky="ew", padx=5)
+            query.columnconfigure(column, weight=1)
+        ttk.Button(query, text="C-FIND", command=self.query_minipacs).grid(row=1, column=3, padx=5)
+        ttk.Button(query, text="C-MOVE seleccionado", command=self.move_minipacs).grid(row=1, column=4, padx=5)
+
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True, pady=(10, 0))
+        columns = ("id", "patient_id", "patient_name", "study_uid", "modality", "study_date", "accession")
+        self.minipacs_table = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        headings = {"id": "ID", "patient_id": "Patient ID", "patient_name": "Patient Name", "study_uid": "Study UID", "modality": "Modality", "study_date": "Study Date", "accession": "Accession"}
+        for column in columns:
+            self.minipacs_table.heading(column, text=headings[column])
+            self.minipacs_table.column(column, width=125, anchor="w")
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.minipacs_table.yview)
+        self.minipacs_table.configure(yscrollcommand=scrollbar.set)
+        self.minipacs_table.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        ttk.Button(parent, text="Eliminar instancia seleccionada", command=self.delete_minipacs_item).pack(anchor="w", pady=(8, 0))
+        self.refresh_minipacs()
+
+    def refresh_minipacs(self) -> None:
+        for item in self.minipacs_table.get_children():
+            self.minipacs_table.delete(item)
+        for item in self.minipacs_database.list_items():
+            self.minipacs_table.insert("", "end", iid=str(item["id"]), values=(item["id"], item["patient_id"], item["patient_name"], item["study_instance_uid"], item["modality"], item["study_date"], item["accession_number"]))
+
+    def start_minipacs(self) -> None:
+        try:
+            ae_title = valid_ae_title(self.minipacs_ae.get())
+            host = self.minipacs_host.get().strip() or "127.0.0.1"
+            mini_port = port(self.minipacs_port.get())
+            destination_ae = valid_ae_title(self.move_destination_ae.get())
+            destination_host = self.move_destination_host.get().strip() or "127.0.0.1"
+            destination_port = port(self.move_destination_port.get())
+            self.minipacs_server.start(ae_title, host, mini_port, {destination_ae: (destination_host, destination_port)})
+            self.minipacs_status.configure(text=f"Activo en {host}:{mini_port}")
+        except (ValueError, OSError, RuntimeError) as error:
+            messagebox.showerror("No se pudo iniciar el MiniPACS", str(error))
+
+    def stop_minipacs(self) -> None:
+        self.minipacs_server.stop()
+        self.minipacs_status.configure(text="Detenido")
+
+    def use_minipacs_store(self) -> None:
+        self.store_ae.set(self.minipacs_ae.get())
+        self.store_host.set(self.minipacs_host.get())
+        self.store_port.set(self.minipacs_port.get())
+        self.write_log("Destino C-STORE cambiado al MiniPACS local")
+
+    def delete_minipacs_item(self) -> None:
+        selection = self.minipacs_table.selection()
+        if not selection:
+            messagebox.showwarning("MiniPACS", "Selecciona una instancia para eliminar")
+            return
+        self.minipacs_database.delete(int(selection[0]))
+        self.refresh_minipacs()
+        self.write_log(f"Instancia MiniPACS eliminada: {selection[0]}")
+
+    def minipacs_query_dataset(self) -> Dataset:
+        query = Dataset()
+        query.QueryRetrieveLevel = "STUDY"
+        query.PatientID = self.minipacs_patient_id.get().strip() or "*"
+        query.PatientName = self.minipacs_patient_name.get().strip() or "*"
+        query.StudyInstanceUID = self.minipacs_study_uid.get().strip()
+        query.StudyDate = ""
+        query.Modality = ""
+        query.AccessionNumber = ""
+        return query
+
+    def query_minipacs(self) -> None:
+        try:
+            settings = self.settings()
+            query = self.minipacs_query_dataset()
+            mini_host = self.minipacs_host.get().strip()
+            mini_port = port(self.minipacs_port.get())
+            mini_ae = valid_ae_title(self.minipacs_ae.get())
+        except ValueError as error:
+            messagebox.showerror("Configuración inválida", str(error))
+            return
+        self.status.set("Consultando MiniPACS...")
+        threading.Thread(target=self._query_minipacs, args=(settings, query, mini_host, mini_port, mini_ae), daemon=True).start()
+
+    def _query_minipacs(self, settings: dict[str, object], query: Dataset, mini_host: str, mini_port: int, mini_ae: str) -> None:
+        try:
+            ae = AE(ae_title=settings["local_ae"])
+            ae.add_requested_context(StudyRootQueryRetrieveInformationModelFind)
+            association = ae.associate(mini_host, mini_port, ae_title=mini_ae)
+            if not association.is_established:
+                raise ConnectionError("No se pudo establecer la asociación C-FIND con MiniPACS")
+            results = []
+            for status, identifier in association.send_c_find(query, StudyRootQueryRetrieveInformationModelFind):
+                if status and status.Status in (0xFF00, 0xFF01) and identifier:
+                    results.append(identifier)
+                if status:
+                    self.write_log(f"MiniPACS C-FIND status=0x{status.Status:04X}")
+            association.release()
+            self.minipacs_results = results
+            self.after(0, self.refresh_minipacs_query_results)
+            self.after(0, lambda: self.status.set(f"{len(results)} resultado(s) MiniPACS"))
+        except Exception as error:
+            self.write_log(f"Error MiniPACS C-FIND: {error}")
+            self.after(0, lambda: self.status.set("Error en MiniPACS C-FIND"))
+
+    def refresh_minipacs_query_results(self) -> None:
+        for item in self.minipacs_table.get_children():
+            self.minipacs_table.delete(item)
+        for index, item in enumerate(self.minipacs_results):
+            self.minipacs_table.insert("", "end", iid=f"query-{index}", values=("", getattr(item, "PatientID", ""), getattr(item, "PatientName", ""), getattr(item, "StudyInstanceUID", ""), getattr(item, "Modality", ""), getattr(item, "StudyDate", ""), getattr(item, "AccessionNumber", "")))
+
+    def move_minipacs(self) -> None:
+        selection = self.minipacs_table.selection()
+        if not selection or not selection[0].startswith("query-"):
+            messagebox.showwarning("MiniPACS C-MOVE", "Ejecuta C-FIND y selecciona un resultado")
+            return
+        try:
+            settings = self.settings()
+            destination = valid_ae_title(self.move_destination_ae.get())
+            mini_host = self.minipacs_host.get().strip()
+            mini_port = port(self.minipacs_port.get())
+            mini_ae = valid_ae_title(self.minipacs_ae.get())
+            query = self.minipacs_results[int(selection[0].split("-", 1)[1])]
+            move_query = Dataset()
+            move_query.QueryRetrieveLevel = "STUDY"
+            move_query.StudyInstanceUID = getattr(query, "StudyInstanceUID", "")
+            move_query.PatientID = getattr(query, "PatientID", "")
+        except ValueError as error:
+            messagebox.showerror("Configuración inválida", str(error))
+            return
+        self.status.set("Ejecutando C-MOVE...")
+        threading.Thread(target=self._move_minipacs, args=(settings, destination, move_query, mini_host, mini_port, mini_ae), daemon=True).start()
+
+    def _move_minipacs(self, settings: dict[str, object], destination: str, query: Dataset, mini_host: str, mini_port: int, mini_ae: str) -> None:
+        try:
+            ae = AE(ae_title=settings["local_ae"])
+            ae.add_requested_context(StudyRootQueryRetrieveInformationModelMove)
+            association = ae.associate(mini_host, mini_port, ae_title=mini_ae)
+            if not association.is_established:
+                raise ConnectionError("No se pudo establecer la asociación C-MOVE con MiniPACS")
+            for status, identifier in association.send_c_move(query, destination, StudyRootQueryRetrieveInformationModelMove):
+                if status:
+                    self.write_log(f"MiniPACS C-MOVE status=0x{status.Status:04X}")
+            association.release()
+            self.after(0, lambda: self.status.set("C-MOVE completado"))
+        except Exception as error:
+            self.write_log(f"Error MiniPACS C-MOVE: {error}")
+            self.after(0, lambda: self.status.set("Error en MiniPACS C-MOVE"))
 
     def refresh_worklist(self) -> None:
         for item in self.worklist_table.get_children():
@@ -305,6 +500,7 @@ class DicomApp(tk.Tk):
 
     def close(self) -> None:
         self.mwl_server.stop()
+        self.minipacs_server.stop()
         self.destroy()
 
     def write_log(self, text: str) -> None:

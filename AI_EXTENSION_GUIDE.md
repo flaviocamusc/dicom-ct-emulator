@@ -11,6 +11,7 @@ Componentes principales:
 - `app.py`: aplicación Tkinter, cliente MWL C-FIND, generador CT sintético y cliente C-STORE SCU.
 - `database.py`: repositorio SQLite de órdenes MWL.
 - `mwl_server.py`: servidor MWL SCP basado en `EVT_C_FIND`.
+- `minipacs.py`: repositorio de instancias y servidor SCP para C-STORE, C-FIND y C-MOVE.
 - `requirements.txt`: dependencias de ejecución.
 - `README.md`: instalación, flujo de pruebas y limitaciones.
 - `LICENSE`: licencia MIT.
@@ -50,6 +51,8 @@ python -m pip check
 - Pruebas automatizadas con un puerto efímero y una base SQLite temporal.
 - TLS DICOM con certificados configurables.
 - Enhanced CT y negociación explícita de Transfer Syntax.
+- Indexación por series e instancias para consultas Query/Retrieve más completas.
+- Destinos C-MOVE persistidos y validación de AE Titles remotos.
 
 ## Nota sobre IA
 
