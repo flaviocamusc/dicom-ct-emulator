@@ -37,7 +37,7 @@ El proyecto está orientado a pruebas locales y de integración. Actualmente imp
 ## Instalación y ejecución
 
 ```powershell
-cd C:\Users\flavi\Downloads\dicom-ct-emulator
+cd C:\Users\{dir}Downloads\dicom-ct-emulator
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 py -m pip install -r requirements.txt
